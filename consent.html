@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect Timora</title>
+<!-- Timora OAuth consent page. Supabase Auth redirects here with ?authorization_id=... when Claude connects.
+     Only Timora's public publishable key is embedded; Row Level Security protects all data. -->
+<style>
+  :root { --bg:#f7f6fb; --card:#fff; --text:#1c1b1f; --muted:#5f5c69; --brand:#4f46e5; --line:#e4e1ec; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#131218; --card:#1d1c23; --text:#e6e1e9; --muted:#a9a4b3; --brand:#a5a1ff; --line:#33313b; } }
+  * { box-sizing: border-box }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:16px; background:var(--bg); color:var(--text);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif }
+  main { width:100%; max-width:420px; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:28px }
+  h1 { font-size:22px; margin:0 0 6px } p { color:var(--muted); margin:0 0 16px }
+  ul { padding-left:20px; margin:0 0 20px } li { margin:4px 0 }
+  input { width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:12px; font-size:16px; background:transparent; color:inherit; margin-bottom:12px }
+  button { width:100%; padding:12px; border:0; border-radius:999px; font-size:16px; font-weight:600; cursor:pointer; background:var(--brand); color:#fff; margin-bottom:8px }
+  button.secondary { background:transparent; color:var(--brand); border:1px solid var(--line) }
+  button:disabled { opacity:.6; cursor:default }
+  .error { color:#c62828 } [hidden] { display:none }
+</style></head>
+<body><main>
+  <section id="email-step" hidden>
+    <h1>Sign in to Timora</h1>
+    <p>Use the same email and password as in the Timora app (Settings &gt; Connect to Claude).</p>
+    <input id="email" type="email" autocomplete="email" placeholder="you@example.com" aria-label="Email">
+    <input id="password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password">
+    <button id="signin">Sign in</button>
+    <button id="signup" class="secondary">Create account</button>
+  </section>
+  <section id="consent-step" hidden>
+    <h1>Allow <span id="client"></span> to use Timora?</h1>
+    <p>It will be able to:</p>
+    <ul>
+      <li>Read your planner: tasks, deadlines, classes, free time and focus history</li>
+      <li>Suggest plans, which wait in the Timora app for you to accept</li>
+    </ul>
+    <p>It <b>cannot</b> change your planner by itself. You can disconnect anytime in Timora's settings.</p>
+    <p>After you choose, you'll return to <b id="redirect-host"></b>.</p>
+    <button id="allow">Allow</button>
+    <button id="deny" class="secondary">Deny</button>
+  </section>
+  <p id="status" role="status"></p>
+</main>
+<script type="module">
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
+  const supabase = createClient("https://oscujbjgvulwzspexbyy.supabase.co", "sb_publishable_Oq3TyzDnjorYBR3jUra9Iw_kBSsAFQj")
+  const id = new URLSearchParams(location.search).get('authorization_id')
+  const $ = (x) => document.getElementById(x)
+  const show = (step) => ['email-step', 'consent-step'].forEach((s) => $(s).hidden = s !== step)
+  const status = (msg, error = false) => { $('status').textContent = msg; $('status').className = error ? 'error' : '' }
+
+  async function consent() {
+    const { data, error } = await supabase.auth.oauth.getAuthorizationDetails(id)
+    if (error) return status(error.message, true)
+    if (!('authorization_id' in data)) return location.assign(data.redirect_url) // approved before
+    $('client').textContent = data.client?.name || 'this app'
+    try { $('redirect-host').textContent = new URL(data.redirect_uri).hostname } catch { $('redirect-host').textContent = 'the app' }
+    show('consent-step')
+  }
+  async function decide(approve) {
+    $('allow').disabled = $('deny').disabled = true
+    const { data, error } = approve
+      ? await supabase.auth.oauth.approveAuthorization(id)
+      : await supabase.auth.oauth.denyAuthorization(id)
+    if (error) { $('allow').disabled = $('deny').disabled = false; return status(error.message, true) }
+    status(approve ? 'Connected. Returning to Claude...' : 'Denied. Returning...')
+    location.assign(data.redirect_url)
+  }
+
+  async function signIn(create) {
+    const email = $('email').value.trim(), password = $('password').value
+    if (!email || !password) return status('Enter your email and password.', true)
+    $('signin').disabled = $('signup').disabled = true
+    const { error } = create
+      ? await supabase.auth.signUp({ email, password })
+      : await supabase.auth.signInWithPassword({ email, password })
+    $('signin').disabled = $('signup').disabled = false
+    if (error) return status(error.message, true)
+    status(''); consent()
+  }
+  $('signin').onclick = () => signIn(false)
+  $('signup').onclick = () => signIn(true)
+  $('allow').onclick = () => decide(true)
+  $('deny').onclick = () => decide(false)
+
+  if (!id) status('This page is opened by Claude when you connect Timora.', true)
+  else if ((await supabase.auth.getSession()).data.session) consent()
+  else show('email-step')
+</script>
+</body></html>
